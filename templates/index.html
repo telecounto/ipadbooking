@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iPad Booking System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>iPad Booking System</h1>
+    </header>
+
+    <main>
+        <section id="booking-form-section">
+            <h2>Make a Booking</h2>
+            <form id="booking-form">
+                <div>
+                    <label for="userName">Name:</label>
+                    <input type="text" id="userName" name="userName" required>
+                </div>
+                <div>
+                    <label for="userEmail">Email:</label>
+                    <input type="email" id="userEmail" name="userEmail" required>
+                </div>
+                <div>
+                    <label for="bookingDate">Date:</label>
+                    <input type="date" id="bookingDate" name="bookingDate" required>
+                </div>
+
+                <h3>Select iPads:</h3>
+                <div id="ipads-list">
+                    <!-- iPads will be loaded here by JavaScript -->
+                    <p>Loading iPads...</p>
+                </div>
+
+                <h3>Select Periods:</h3>
+                <div id="periods-list">
+                    <!-- Periods will be loaded here by JavaScript -->
+                    <p>Loading periods...</p>
+                </div>
+
+                <button type="submit">Submit Booking</button>
+            </form>
+            <div id="booking-message"></div>
+        </section>
+
+        <section id="all-bookings-section">
+            <h2>Current Bookings</h2>
+            <button id="load-bookings-btn">Load All Bookings</button>
+            <div id="all-bookings-list">
+                <!-- Bookings will be loaded here -->
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2024 iPad Booking System</p>
+    </footer>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
