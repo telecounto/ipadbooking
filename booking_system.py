@@ -1,132 +1,171 @@
 # booking_system.py
-from models import User, iPad, Period, Booking
-from data import AVAILABLE_IPADS, AVAILABLE_PERIODS # Assuming these might be useful for validation or listing
+from models import User # Still used for User object structure from API
+from supabase import Client
+# Note: iPad and Period objects from models.py are less directly used here,
+# as we're dealing with IDs and data from Supabase.
 
-# In-memory list to store bookings
-# In a real application, this would be a database
-_bookings: list[Booking] = []
-
-def is_ipad_available(ipad_id: str, date: str, period_id: str) -> bool:
+def is_ipad_available(ipad_id: str, date: str, period_id: str, db_client: Client) -> bool:
     """
-    Checks if a specific iPad is available for a given date and period.
-
-    Args:
-        ipad_id: The ID of the iPad to check.
-        date: The date of the booking (e.g., "YYYY-MM-DD").
-        period_id: The ID of the time period.
-
-    Returns:
-        True if the iPad is available, False otherwise.
+    Checks if a specific iPad is available for a given date and period using Supabase.
     """
-    for booking in _bookings:
-        if booking.ipad.id == ipad_id and            booking.date == date and            booking.period.id == period_id:
-            return False  # iPad is already booked for this date and period
-    return True
+    if not db_client:
+        print("Error: Supabase client not provided to is_ipad_available.")
+        return False # Or raise an exception
 
-def get_ipad_by_id(ipad_id: str) -> iPad | None:
-    """Helper function to find an iPad object by its ID."""
-    for ipad_obj in AVAILABLE_IPADS:
-        if ipad_obj.id == ipad_id:
-            return ipad_obj
-    return None
+    try:
+        response = db_client.table('bookings').select('id').eq('ipad_id', ipad_id).eq('booking_date', date).eq('period_id', period_id).execute()
+        if response.data:
+            return False # Booking exists, so iPad is not available
+        return True # No booking found, iPad is available
+    except Exception as e:
+        print(f"Error checking iPad availability in Supabase: {e}")
+        return False # Treat errors as "not available" or handle more gracefully
 
-def get_period_by_id(period_id: str) -> Period | None:
-    """Helper function to find a Period object by its ID."""
-    for period_obj in AVAILABLE_PERIODS:
-        if period_obj.id == period_id:
-            return period_obj
-    return None
-
-def create_booking(user: User, selected_ipad_ids: list[str], date: str, selected_period_ids: list[str]) -> tuple[bool, str, list[Booking]]:
+def create_booking(user: User, selected_ipad_ids: list[str], date: str, selected_period_ids: list[str], db_client: Client) -> tuple[bool, str, list[dict]]:
     """
-    Attempts to create bookings for the selected iPads and periods.
-
-    Args:
-        user: The User object making the booking.
-        selected_ipad_ids: A list of IDs of the iPads to book.
-        date: The date for the bookings (e.g., "YYYY-MM-DD").
-        selected_period_ids: A list of IDs of the time periods to book.
-
-    Returns:
-        A tuple containing:
-        - bool: True if all bookings were successful, False otherwise.
-        - str: A message indicating success or detailing the first conflict found.
-        - list[Booking]: A list of successfully created Booking objects. Empty if any part fails.
+    Attempts to create bookings in Supabase for the selected iPads and periods.
+    Validates iPad and Period IDs against the database.
     """
-    newly_created_bookings = []
+    if not db_client:
+        return False, "Server error: Database connection not configured.", []
 
-    # Validate iPad and Period IDs first
-    for ipad_id in selected_ipad_ids:
-        if get_ipad_by_id(ipad_id) is None:
-            return False, f"Error: iPad with ID '{ipad_id}' not found.", []
+    newly_created_bookings_data = []
 
-    for period_id in selected_period_ids:
-        if get_period_by_id(period_id) is None:
-            return False, f"Error: Period with ID '{period_id}' not found.", []
+    # Validate iPad IDs
+    try:
+        ipad_validation_response = db_client.table('ipads').select('id').in_('id', selected_ipad_ids).execute()
+        valid_db_ipad_ids = {ipad['id'] for ipad in ipad_validation_response.data}
+        for ipad_id in selected_ipad_ids:
+            if ipad_id not in valid_db_ipad_ids:
+                return False, f"Error: iPad with ID '{ipad_id}' not found in database.", []
+    except Exception as e:
+        print(f"Error validating iPad IDs: {e}")
+        return False, "Error validating iPad information.", []
 
-    for ipad_id in selected_ipad_ids:
-        ipad_obj = get_ipad_by_id(ipad_id) # We know it exists from validation above
+    # Validate Period IDs
+    try:
+        period_validation_response = db_client.table('periods').select('id').in_('id', selected_period_ids).execute()
+        valid_db_period_ids = {period['id'] for period in period_validation_response.data}
         for period_id in selected_period_ids:
-            period_obj = get_period_by_id(period_id) # We know it exists
+            if period_id not in valid_db_period_ids:
+                return False, f"Error: Period with ID '{period_id}' not found in database.", []
+    except Exception as e:
+        print(f"Error validating Period IDs: {e}")
+        return False, "Error validating Period information.", []
 
-            if not is_ipad_available(ipad_id, date, period_id):
-                # If any slot is unavailable, fail the entire transaction for simplicity.
-                # A more complex system might allow partial bookings.
-                return False, f"Booking conflict: iPad {ipad_id} is already booked for period {period_id} on {date}.", []
 
-            # If we were to create bookings one by one and add them,
-            # we'd need to handle rollbacks if a later one fails.
-            # For now, we check all first, then create.
-
-    # All checks passed, now create the bookings
+    # Check availability for all requested slots first
     for ipad_id in selected_ipad_ids:
-        ipad_obj = get_ipad_by_id(ipad_id)
         for period_id in selected_period_ids:
-            period_obj = get_period_by_id(period_id)
+            if not is_ipad_available(ipad_id, date, period_id, db_client):
+                # Fetch details for better error message (optional)
+                ipad_desc = ipad_id # Placeholder, could fetch full description
+                period_desc = period_id # Placeholder
+                return False, f"Booking conflict: iPad {ipad_desc} is already booked for period {period_desc} on {date}.", []
 
-            booking = Booking(user=user, ipad=ipad_obj, date=date, period=period_obj)
-            newly_created_bookings.append(booking)
+    # All slots are available, prepare records for batch insert
+    bookings_to_insert = []
+    for ipad_id in selected_ipad_ids:
+        for period_id in selected_period_ids:
+            bookings_to_insert.append({
+                'user_name': user.name,
+                'user_email': user.email,
+                'booking_date': date,
+                'ipad_id': ipad_id,
+                'period_id': period_id
+            })
 
-    _bookings.extend(newly_created_bookings)
-    return True, "Bookings successful.", newly_created_bookings
+    if not bookings_to_insert:
+        return False, "No valid bookings to create.", []
 
-def get_all_bookings() -> list[Booking]:
-    """Returns a list of all current bookings."""
-    return list(_bookings) # Return a copy
+    try:
+        insert_response = db_client.table('bookings').insert(bookings_to_insert).execute()
 
-# Example usage (optional, for testing booking_system.py directly)
-if __name__ == '__main__':
-    # Create a dummy user
-    test_user = User(name="Test User", email="test@example.com")
+        if hasattr(insert_response, 'data') and insert_response.data:
+            # The returned data from Supabase insert is usually a list of the inserted records.
+            # We might need to join with ipads and periods tables to get full descriptions for the response,
+            # or the web_app.py can re-fetch if needed. For simplicity, return what Supabase gives.
+            # The structure of items in insert_response.data will be dicts.
+            # To match the expected output for web_app.py (which includes descriptions),
+            # we might need to do a subsequent query or adjust web_app.py's formatting.
+            # For now, let's return the raw inserted data and adapt web_app.py if necessary.
 
-    # Attempt to book iPad "1" for Period "P1" on "2024-01-01"
-    print("Attempting first booking...")
-    success, message, created_bks = create_booking(user=test_user, selected_ipad_ids=["1"], date="2024-01-01", selected_period_ids=["P1"])
-    print(f"Success: {success}, Message: {message}, Bookings: {created_bks}")
+            # For the purpose of the tuple type hint (list[dict]), and to provide consistent data
+            # back to web_app.py for its current JSON formatting logic, let's try to fetch the newly created bookings
+            # with joined data. This is less efficient (extra SELECT) but simpler for now.
+            # A more performant way would be to adjust web_app.py's formatting.
 
-    # Attempt to book the same slot again
-    print("\nAttempting conflicting booking...")
-    success, message, created_bks = create_booking(user=test_user, selected_ipad_ids=["1"], date="2024-01-01", selected_period_ids=["P1"])
-    print(f"Success: {success}, Message: {message}, Bookings: {created_bks}")
+            # Extract IDs of newly created bookings if possible (depends on Supabase return)
+            # Assuming insert_response.data gives us dicts with 'id' of the new booking.
+            new_booking_ids = [b['id'] for b in insert_response.data if 'id' in b]
 
-    # Attempt to book multiple iPads and periods
-    print("\nAttempting multiple bookings (non-conflicting)...")
-    success, message, created_bks = create_booking(user=test_user, selected_ipad_ids=["2", "3"], date="2024-01-01", selected_period_ids=["P1", "P2"])
-    print(f"Success: {success}, Message: {message}, Bookings: {created_bks}")
+            if new_booking_ids:
+                # Fetch these new bookings with joined data
+                # This select statement is illustrative. The actual join syntax might vary
+                # or Supabase Python client might have a more direct way.
+                # Using .select() with foreign table hints:
+                select_new_q = db_client.table('bookings').select('''
+                    id, user_name, user_email, booking_date, ipad_id, period_id,
+                    ipads (id, description),
+                    periods (id, start_time, end_time)
+                ''').in_('id', new_booking_ids).execute()
 
-    # Attempt to book one that is taken and one that is not
-    print("\nAttempting mixed bookings (one conflicting)...")
-    # iPad "2" for "P1" on "2024-01-01" is now taken from the previous multi-booking.
-    # iPad "5" for "P1" on "2024-01-01" should be available.
-    success, message, created_bks = create_booking(user=test_user, selected_ipad_ids=["2", "5"], date="2024-01-01", selected_period_ids=["P1"])
-    print(f"Success: {success}, Message: {message}, Bookings: {created_bks}")
+                if hasattr(select_new_q, 'data') and select_new_q.data:
+                    newly_created_bookings_data = select_new_q.data
+                else: # Fallback if select fails, use raw insert data (less info)
+                    newly_created_bookings_data = insert_response.data
+            else: # Fallback if IDs not returned or no data
+                 newly_created_bookings_data = insert_response.data
 
-    print("\nAll bookings made:")
-    for bk in get_all_bookings():
-        print(bk)
 
-    print("\nChecking availability for iPad 1, Period P1 on 2024-01-01 (should be False):")
-    print(is_ipad_available(ipad_id="1", date="2024-01-01", period_id="P1"))
+            return True, "Bookings successful.", newly_created_bookings_data
+        else:
+            # Handle potential errors from Supabase (e.g., unique constraint violation if caught here)
+            # The UNIQUE constraint should ideally prevent this stage if is_ipad_available is correct,
+            # but good to have a fallback.
+            error_msg = "Booking creation failed in database."
+            if hasattr(insert_response, 'error') and insert_response.error:
+                error_msg += f" DB Error: {insert_response.error.message}"
+            print(error_msg) # Log it
+            return False, error_msg, []
 
-    print("\nChecking availability for iPad 1, Period P2 on 2024-01-01 (should be True):")
-    print(is_ipad_available(ipad_id="1", date="2024-01-01", period_id="P2"))
+    except Exception as e:
+        print(f"Exception creating bookings in Supabase: {e}")
+        # Check if it's a unique constraint violation (specific error codes/messages vary by DB)
+        # For Supabase/Postgres, unique violation error code is '23505'
+        if "23505" in str(e) or "unique constraint" in str(e).lower(): # Basic check
+             return False, "Booking conflict: One or more slots are already booked (database constraint).", []
+        return False, f"An unexpected error occurred during booking: {str(e)}", []
+
+
+def get_all_bookings(db_client: Client) -> list[dict]:
+    """
+    Retrieves all bookings from Supabase, joining with ipads and periods tables.
+    """
+    if not db_client:
+        print("Error: Supabase client not provided to get_all_bookings.")
+        return []
+    try:
+        # The select string allows specifying columns from foreign tables
+        # Syntax: foreign_table_name ( column1, column2, ... )
+        # Ensure 'ipads' and 'periods' are the correct names of your foreign tables
+        # as referenced by foreign keys in the 'bookings' table.
+        response = db_client.table('bookings').select('''
+            user_name,
+            user_email,
+            booking_date,
+            ipad_id,
+            period_id,
+            ipads (id, description),
+            periods (id, start_time, end_time)
+        ''').order('booking_date', desc=False).order('created_at', desc=False).execute()
+
+        if response.data:
+            return response.data
+        return []
+    except Exception as e:
+        print(f"Error fetching all bookings from Supabase: {e}")
+        return []
+
+# Old helper functions like get_ipad_by_id, get_period_by_id (that used local data)
+# are removed as their functionality is now part of direct DB queries or handled by web_app.py using db_utils.
