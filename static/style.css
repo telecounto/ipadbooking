@@ -99,6 +99,12 @@ input[type="checkbox"] {
     border: 1px solid #ebccd1;
 }
 
+.loading-message {
+    background-color: #d9edf7;
+    color: #31708f;
+    border: 1px solid #bce8f1;
+}
+
 #all-bookings-list ul {
     list-style-type: none;
     padding: 0;

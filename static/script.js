@@ -2,6 +2,14 @@
 document.addEventListener('DOMContentLoaded', () => {
     console.log("Frontend JavaScript loaded.");
 
+    const bookingDateInput = document.getElementById('bookingDate');
+    bookingDateInput.addEventListener('change', () => {
+        const selectedDate = bookingDateInput.value;
+        if (selectedDate) {
+            loadAvailableSlots(selectedDate);
+        }
+    });
+
     loadIPads();
     loadPeriods();
 
@@ -18,7 +26,94 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
         console.error("Load bookings button not found!");
     }
+
+    const bookingSearchInput = document.getElementById('booking-search');
+    if (bookingSearchInput) {
+        bookingSearchInput.addEventListener('keyup', () => {
+            const searchTerm = bookingSearchInput.value.toLowerCase();
+            const allBookingsListDiv = document.getElementById('all-bookings-list');
+            const bookings = allBookingsListDiv.getElementsByTagName('li');
+            Array.from(bookings).forEach(booking => {
+                if (booking.textContent.toLowerCase().includes(searchTerm)) {
+                    booking.style.display = '';
+                } else {
+                    booking.style.display = 'none';
+                }
+            });
+        });
+    }
 });
+
+async function loadAvailableSlots(date) {
+    const ipadsListDiv = document.getElementById('ipads-list');
+    const periodsListDiv = document.getElementById('periods-list');
+    if (!ipadsListDiv || !periodsListDiv) {
+        console.error("DOM elements for iPads or periods list not found.");
+        return;
+    }
+
+    ipadsListDiv.innerHTML = '<p class="loading-message">Loading available iPads...</p>';
+    periodsListDiv.innerHTML = '<p class="loading-message">Loading available periods...</p>';
+
+    try {
+        const response = await fetch(`/api/available_slots?date=${date}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+        }
+        const data = await response.json();
+
+        // Populate iPads
+        if (data.ipads && data.ipads.length > 0) {
+            ipadsListDiv.innerHTML = '';
+            data.ipads.forEach(ipad => {
+                const div = document.createElement('div');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `ipad-${ipad.id}`;
+                checkbox.name = 'selectedIpadIds';
+                checkbox.value = ipad.id;
+
+                const label = document.createElement('label');
+                label.htmlFor = `ipad-${ipad.id}`;
+                label.textContent = `${ipad.id}: ${ipad.description}`;
+
+                div.appendChild(checkbox);
+                div.appendChild(label);
+                ipadsListDiv.appendChild(div);
+            });
+        } else {
+            ipadsListDiv.innerHTML = '<p>No iPads available for this date.</p>';
+        }
+
+        // Populate Periods
+        if (data.periods && data.periods.length > 0) {
+            periodsListDiv.innerHTML = '';
+            data.periods.forEach(period => {
+                const div = document.createElement('div');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `period-${period.id}`;
+                checkbox.name = 'selectedPeriodIds';
+                checkbox.value = period.id;
+
+                const label = document.createElement('label');
+                label.htmlFor = `period-${period.id}`;
+                label.textContent = `${period.id}: ${period.start_time} - ${period.end_time}`;
+
+                div.appendChild(checkbox);
+                div.appendChild(label);
+                periodsListDiv.appendChild(div);
+            });
+        } else {
+            periodsListDiv.innerHTML = '<p>No periods available for this date.</p>';
+        }
+
+    } catch (error) {
+        console.error('Error loading available slots:', error);
+        ipadsListDiv.innerHTML = `<p class="error-message">Error loading iPads: ${error.message}</p>`;
+        periodsListDiv.innerHTML = `<p class="error-message">Error loading periods: ${error.message}</p>`;
+    }
+}
 
 async function loadIPads() {
     const ipadsListDiv = document.getElementById('ipads-list');
@@ -103,7 +198,8 @@ async function handleBookingSubmit(event) {
 
     const bookingMessageDiv = document.getElementById('booking-message');
     if (!bookingMessageDiv) { console.error("DOM element #booking-message not found."); return; }
-    bookingMessageDiv.innerHTML = '';
+    bookingMessageDiv.innerHTML = '<p>Submitting booking...</p>';
+    bookingMessageDiv.className = 'loading-message';
 
     const userName = document.getElementById('userName').value;
     const userEmail = document.getElementById('userEmail').value;
@@ -170,7 +266,7 @@ async function handleBookingSubmit(event) {
 async function loadAllBookings() {
     const allBookingsListDiv = document.getElementById('all-bookings-list');
     if (!allBookingsListDiv) { console.error("DOM element #all-bookings-list not found."); return; }
-    allBookingsListDiv.innerHTML = '<p>Loading bookings...</p>';
+    allBookingsListDiv.innerHTML = '<p class="loading-message">Loading bookings...</p>';
 
     try {
         const response = await fetch('/api/bookings');
@@ -181,16 +277,33 @@ async function loadAllBookings() {
 
         if (bookings && bookings.length > 0) {
             allBookingsListDiv.innerHTML = ''; // Clear loading message
-            const ul = document.createElement('ul');
-            bookings.forEach(booking => {
-                const li = document.createElement('li');
-                li.textContent = `User: ${booking.user_name} (${booking.user_email}) - ` +
-                                 `iPad: ${booking.ipad_id} (${booking.ipad_description}) - ` +
-                                 `Date: ${booking.date} - ` +
-                                 `Period: ${booking.period_id} (${booking.period_start_time} - ${booking.period_end_time})`;
-                ul.appendChild(li);
+
+            const bookingsByDate = bookings.reduce((acc, booking) => {
+                const date = booking.date;
+                if (!acc[date]) {
+                    acc[date] = [];
+                }
+                acc[date].push(booking);
+                return acc;
+            }, {});
+
+            const sortedDates = Object.keys(bookingsByDate).sort((a, b) => new Date(a) - new Date(b));
+
+            sortedDates.forEach(date => {
+                const dateHeader = document.createElement('h3');
+                dateHeader.textContent = date;
+                allBookingsListDiv.appendChild(dateHeader);
+
+                const ul = document.createElement('ul');
+                bookingsByDate[date].forEach(booking => {
+                    const li = document.createElement('li');
+                    li.textContent = `User: ${booking.user_name} (${booking.user_email}) - ` +
+                                     `iPad: ${booking.ipad_id} (${booking.ipad_description}) - ` +
+                                     `Period: ${booking.period_id} (${booking.period_start_time} - ${booking.period_end_time})`;
+                    ul.appendChild(li);
+                });
+                allBookingsListDiv.appendChild(ul);
             });
-            allBookingsListDiv.appendChild(ul);
         } else {
             allBookingsListDiv.innerHTML = '<p>No bookings found.</p>';
         }

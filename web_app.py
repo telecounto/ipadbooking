@@ -31,6 +31,18 @@ def get_periods():
     periods_list = get_all_periods_from_db()
     return jsonify(periods_list)
 
+@app.route('/api/available_slots', methods=['GET'])
+def get_available_slots():
+    if not supabase_client:
+        return jsonify({"error": "Supabase client not initialized. Check server configuration."}), 500
+
+    date = request.args.get('date')
+    if not date:
+        return jsonify({"error": "Date parameter is required."}), 400
+
+    available_slots = booking_system.get_available_slots_for_date(date, db_client=supabase_client)
+    return jsonify(available_slots)
+
 @app.route('/api/bookings', methods=['POST'])
 def create_new_booking():
     if not supabase_client: # Ensure client is available for booking_system

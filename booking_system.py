@@ -138,6 +138,52 @@ def create_booking(user: User, selected_ipad_ids: list[str], date: str, selected
         return False, f"An unexpected error occurred during booking: {str(e)}", []
 
 
+def get_available_slots_for_date(date: str, db_client: Client) -> dict:
+    """
+    Retrieves all available iPads and periods for a given date.
+    """
+    if not db_client:
+        print("Error: Supabase client not provided to get_available_slots_for_date.")
+        return {"ipads": [], "periods": []}
+
+    try:
+        # Get all bookings for the given date
+        bookings_response = db_client.table('bookings').select('ipad_id, period_id').eq('booking_date', date).execute()
+        booked_slots = {(b['ipad_id'], b['period_id']) for b in bookings_response.data}
+
+        # Get all iPads
+        ipads_response = db_client.table('ipads').select('id, description').execute()
+        all_ipads = ipads_response.data
+
+        # Get all periods
+        periods_response = db_client.table('periods').select('id, start_time, end_time').execute()
+        all_periods = periods_response.data
+
+        # Determine available iPads and periods
+        available_ipads = []
+        available_periods = []
+
+        # An iPad is available if it has at least one available period
+        ipad_availability = {ipad['id']: False for ipad in all_ipads}
+        # A period is available if at least one iPad is available for it
+        period_availability = {period['id']: False for period in all_periods}
+
+        for ipad in all_ipads:
+            for period in all_periods:
+                if (ipad['id'], period['id']) not in booked_slots:
+                    ipad_availability[ipad['id']] = True
+                    period_availability[period['id']] = True
+
+        available_ipads = [ipad for ipad in all_ipads if ipad_availability[ipad['id']]]
+        available_periods = [period for period in all_periods if period_availability[period['id']]]
+
+        return {"ipads": available_ipads, "periods": available_periods}
+
+    except Exception as e:
+        print(f"Error fetching available slots from Supabase: {e}")
+        return {"ipads": [], "periods": []}
+
+
 def get_all_bookings(db_client: Client) -> list[dict]:
     """
     Retrieves all bookings from Supabase, joining with ipads and periods tables.
